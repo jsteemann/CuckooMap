@@ -358,9 +358,6 @@ class CuckooMap {
                      (((double)_tables.back()->nrUsed()) / ((double)lastSize))
               << "% capacity with cold " << coldInsert << std::endl;*/
     bool useMmap = (_tables.size() >= _mmapThreshold);
-    if (useMmap) {
-      std::cout << "Mmap table." << std::endl;
-    }
     auto t = new Subtable(useMmap, lastSize * 4, _valueSize, _valueAlign);
     try {
       _tables.emplace_back(t);
