@@ -57,7 +57,7 @@ class CuckooFilter {
     _slotSize = sizeof(uint16_t);
 
     // Inflate size so that we have some padding to avoid failure
-    size *= 2.0;
+    // size *= 2.0;
     size = (size >= 1024) ? size : 1024;  // want 256 buckets minimum
 
     // First find the smallest power of two that is not smaller than size:

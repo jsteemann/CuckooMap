@@ -61,6 +61,7 @@ class CuckooMap {
         _valueAlign(valueAlign),
         _randState(0x2636283625154737ULL),
         _nrUsed(0),
+        _mmapThreshold(3),
         _useFilters(useFilters),
         _dummyFilter(false, 0) {
     auto t = new Subtable(false, firstSize, valueSize, valueAlign);
@@ -69,15 +70,6 @@ class CuckooMap {
     } catch (...) {
       delete t;
       throw;
-    }
-    if (_useFilters) {
-      auto f = new Filter(false, _tables.back()->capacity());
-      try {
-        _filters.emplace_back(f);
-      } catch (...) {
-        delete f;
-        throw;
-      }
     }
   }
 
@@ -257,11 +249,13 @@ class CuckooMap {
     for (int32_t layer = 0; static_cast<uint32_t>(layer) < _tables.size();
          ++layer) {
       Subtable& sub = *_tables[layer];
-      Filter& filter = _useFilters ? *_filters[layer] : _dummyFilter;
+      bool hasFilter = _useFilters && layer > _mmapThreshold;
+      Filter& filter =
+          (hasFilter) ? *_filters[layer - _mmapThreshold] : _dummyFilter;
       Key* key;
       Value* value;
-      bool found = _useFilters ? (filter.lookup(k) && sub.lookup(k, key, value))
-                               : sub.lookup(k, key, value);
+      bool found = hasFilter ? (filter.lookup(k) && sub.lookup(k, key, value))
+                             : sub.lookup(k, key, value);
       if (found) {
         f._key = key;
         f._value = value;
@@ -305,7 +299,9 @@ class CuckooMap {
     bool somethingExpunged = true;
     while (static_cast<uint32_t>(layer) < _tables.size()) {
       Subtable& sub = *_tables[layer];
-      Filter& filter = _useFilters ? *_filters[layer] : _dummyFilter;
+      bool hasFilter = _useFilters && layer > _mmapThreshold;
+      Filter& filter =
+          hasFilter ? *_filters[layer - _mmapThreshold] : _dummyFilter;
       int maxRounds = (layerHint < 0) ? 128 : 4;
       for (int i = 0; i < maxRounds; ++i) {
         if (f != nullptr && _compKey(originalKey, kCopy)) {
@@ -317,7 +313,7 @@ class CuckooMap {
         if (res < 0) {  // key is already in the table
           return false;
         } else if (res == 0) {
-          if (_useFilters) {
+          if (hasFilter) {
             filterRes = filter.insert(originalKeyAtLayer);
             if (!filterRes) {
               throw;
@@ -330,7 +326,6 @@ class CuckooMap {
       }
       // check if table is too full; if so, expunge a random element
       if (!somethingExpunged && sub.overfull()) {
-        std::cout << "Picking a random element." << std::endl;
         bool expunged = sub.expungeRandom(kCopy, vCopy);
         if (!expunged) {
           throw;
@@ -338,8 +333,7 @@ class CuckooMap {
         somethingExpunged = true;
       }
       if (somethingExpunged) {
-        std::cout << "Something expunged." << std::endl;
-        if (_useFilters && !_compKey(kCopy, originalKeyAtLayer)) {
+        if (hasFilter && !_compKey(kCopy, originalKeyAtLayer)) {
           filterRes = filter.remove(kCopy);
           if (!filterRes) {
             throw;
@@ -363,7 +357,10 @@ class CuckooMap {
               << 100.0 *
                      (((double)_tables.back()->nrUsed()) / ((double)lastSize))
               << "% capacity with cold " << coldInsert << std::endl;*/
-    bool useMmap = (_tables.size() >= 3);
+    bool useMmap = (_tables.size() >= _mmapThreshold);
+    if (useMmap) {
+      std::cout << "Mmap table." << std::endl;
+    }
     auto t = new Subtable(useMmap, lastSize * 4, _valueSize, _valueAlign);
     try {
       _tables.emplace_back(t);
@@ -371,7 +368,7 @@ class CuckooMap {
       delete t;
       throw;
     }
-    if (_useFilters) {
+    if (_useFilters && useMmap) {
       auto fil = new Filter(useMmap, lastSize * 4);
       try {
         _filters.emplace_back(fil);
@@ -389,7 +386,7 @@ class CuckooMap {
         res = _tables.back()->insert(kCopy, vCopy, nullptr, nullptr);
       }
     }
-    if (_useFilters) {
+    if (_useFilters && useMmap) {
       filterRes = _filters.back()->insert(originalKeyAtLayer);
       if (!filterRes) {
         throw;
@@ -421,6 +418,7 @@ class CuckooMap {
   Filter _dummyFilter;
   std::mutex _mutex;
   uint64_t _nrUsed;
+  uint64_t _mmapThreshold;
   bool _useFilters;
 };
 
